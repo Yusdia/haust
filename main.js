@@ -5,7 +5,10 @@ import iniBapakBudi from "./utils/banner.js";
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 
-// Validasi wallet address
+function delay(ms) {
+    return new Promise(res => setTimeout(res, ms));
+}
+
 function isValidAddress(address) {
     return /^0x[a-fA-F0-9]{40}$/.test(address);
 }
@@ -47,8 +50,6 @@ function getRandomProxy(proxies) {
     return proxies[randomIndex];
 }
 
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 const claimFaucet = async (address, proxies) => {
     const maxRetries = 20;
     let attempt = 0;
@@ -77,24 +78,17 @@ const claimFaucet = async (address, proxies) => {
             const response = await axios(axiosConfig);
             log.info(`✅ Claim successful for ${address}: ${JSON.stringify(response.data)}`);
             return;
-
         } catch (error) {
             attempt++;
             log.error(`❌ Attempt ${attempt} failed for ${address}: ${error.message}`);
 
-            if (error?.response?.data) {
+            if (error.response && error.response.data) {
                 log.error(`❗ Server response: ${JSON.stringify(error.response.data)}`);
-            }
-
-            // Skip address jika dianggap invalid oleh server
-            if (error?.response?.data?.msg === "invalid address") {
-                log.warn(`⛔ Skipping invalid address: ${address}`);
-                break;
             }
 
             if (attempt < maxRetries) {
                 currentProxy = getRandomProxy(proxies);
-                await delay(1000); // 1 detik antar retry
+                await delay(1000);
             } else {
                 log.error(`🚫 Failed to claim after ${maxRetries} attempts for ${address}`);
             }
@@ -115,24 +109,23 @@ const main = async () => {
     }
 
     for (const wallet of wallets) {
-        const address = wallet.address || wallet;
+        let address = typeof wallet === 'string' ? wallet : wallet.address;
+        address = address.trim();
 
         if (!isValidAddress(address)) {
-            log.warn(`❌ Skipping invalid format address: ${address}`);
+            log.warn(`❌ Skipping invalid address: "${address}"`);
             continue;
         }
 
         log.info(`🚀 Starting claim for: ${address}`);
         await claimFaucet(address, proxies);
 
-        // Delay 5 detik antar wallet claim
-        await delay(5000);
+        await delay(5000); // delay antar wallet
     }
 
     log.info("✅ All wallet claims processed.");
 };
 
-// Global error handling
 main().catch((err) => {
     log.error("💥 Fatal error in main():", err.message);
 });
