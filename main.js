@@ -5,6 +5,11 @@ import iniBapakBudi from "./utils/banner.js";
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 
+// Validasi wallet address
+function isValidAddress(address) {
+    return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+
 export async function readWallets() {
     try {
         await access("wallets.json");
@@ -42,6 +47,8 @@ function getRandomProxy(proxies) {
     return proxies[randomIndex];
 }
 
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const claimFaucet = async (address, proxies) => {
     const maxRetries = 20;
     let attempt = 0;
@@ -54,7 +61,6 @@ const claimFaucet = async (address, proxies) => {
                 url: 'https://faucet.haust.app/api/claim',
                 data: { address },
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 10000,
             };
 
             if (currentProxy) {
@@ -63,40 +69,38 @@ const claimFaucet = async (address, proxies) => {
                     axiosConfig.httpsAgent = new SocksProxyAgent(currentProxy);
                 } else if (currentProxy.startsWith('http')) {
                     axiosConfig.httpsAgent = new HttpsProxyAgent(currentProxy);
-                } else {
-                    log.warn(`⚠️ Unsupported proxy format: ${currentProxy}`);
                 }
             } else {
                 log.warn(`⚠️ No proxy used for wallet: ${address}`);
             }
 
             const response = await axios(axiosConfig);
-
-            if (response.status >= 200 && response.status < 300) {
-                log.info(`✅ Claim successful for ${address}: ${JSON.stringify(response.data)}`);
-                return;
-            } else {
-                throw new Error(`Unexpected response: ${response.status}`);
-            }
+            log.info(`✅ Claim successful for ${address}: ${JSON.stringify(response.data)}`);
+            return;
 
         } catch (error) {
             attempt++;
-            log.error(`❌ Attempt ${attempt} failed for ${address}: ${error?.message || error}`);
+            log.error(`❌ Attempt ${attempt} failed for ${address}: ${error.message}`);
+
             if (error?.response?.data) {
                 log.error(`❗ Server response: ${JSON.stringify(error.response.data)}`);
             }
 
+            // Skip address jika dianggap invalid oleh server
+            if (error?.response?.data?.msg === "invalid address") {
+                log.warn(`⛔ Skipping invalid address: ${address}`);
+                break;
+            }
+
             if (attempt < maxRetries) {
                 currentProxy = getRandomProxy(proxies);
-                await new Promise(res => setTimeout(res, 1000));
+                await delay(1000); // 1 detik antar retry
             } else {
                 log.error(`🚫 Failed to claim after ${maxRetries} attempts for ${address}`);
             }
         }
     }
 };
-
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const main = async () => {
     log.info(iniBapakBudi);
@@ -111,21 +115,24 @@ const main = async () => {
     }
 
     for (const wallet of wallets) {
-        const address = typeof wallet === 'string' ? wallet : wallet.address;
-        if (!address) {
-            log.warn("⚠️ Invalid wallet format detected. Skipping...");
+        const address = wallet.address || wallet;
+
+        if (!isValidAddress(address)) {
+            log.warn(`❌ Skipping invalid format address: ${address}`);
             continue;
         }
 
         log.info(`🚀 Starting claim for: ${address}`);
         await claimFaucet(address, proxies);
-        log.info(`⏳ Waiting 5 seconds before next wallet...`);
-        await delay(5000); // 5 detik antar wallet
+
+        // Delay 5 detik antar wallet claim
+        await delay(5000);
     }
 
     log.info("✅ All wallet claims processed.");
 };
 
+// Global error handling
 main().catch((err) => {
-    log.error("💥 Fatal error in main():", err?.message || err);
+    log.error("💥 Fatal error in main():", err.message);
 });
