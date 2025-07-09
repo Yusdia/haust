@@ -54,6 +54,7 @@ const claimFaucet = async (address, proxies) => {
                 url: 'https://faucet.haust.app/api/claim',
                 data: { address },
                 headers: { 'Content-Type': 'application/json' },
+                timeout: 10000,
             };
 
             if (currentProxy) {
@@ -62,17 +63,29 @@ const claimFaucet = async (address, proxies) => {
                     axiosConfig.httpsAgent = new SocksProxyAgent(currentProxy);
                 } else if (currentProxy.startsWith('http')) {
                     axiosConfig.httpsAgent = new HttpsProxyAgent(currentProxy);
+                } else {
+                    log.warn(`⚠️ Unsupported proxy format: ${currentProxy}`);
                 }
             } else {
-                log.warn(`No proxy used for wallet: ${address}`);
+                log.warn(`⚠️ No proxy used for wallet: ${address}`);
             }
 
             const response = await axios(axiosConfig);
-            log.info(`✅ Claim successful for ${address}: ${JSON.stringify(response.data)}`);
-            return;
+
+            if (response.status >= 200 && response.status < 300) {
+                log.info(`✅ Claim successful for ${address}: ${JSON.stringify(response.data)}`);
+                return;
+            } else {
+                throw new Error(`Unexpected response: ${response.status}`);
+            }
+
         } catch (error) {
             attempt++;
-            log.error(`❌ Attempt ${attempt} failed for ${address}: ${error.message}`);
+            log.error(`❌ Attempt ${attempt} failed for ${address}: ${error?.message || error}`);
+            if (error?.response?.data) {
+                log.error(`❗ Server response: ${JSON.stringify(error.response.data)}`);
+            }
+
             if (attempt < maxRetries) {
                 currentProxy = getRandomProxy(proxies);
                 await new Promise(res => setTimeout(res, 1000));
@@ -83,9 +96,11 @@ const claimFaucet = async (address, proxies) => {
     }
 };
 
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 const main = async () => {
     log.info(iniBapakBudi);
-    await new Promise(res => setTimeout(res, 3000));
+    await delay(3000);
 
     const wallets = await readWallets();
     const proxies = await readProxies();
@@ -95,22 +110,22 @@ const main = async () => {
         return;
     }
 
-    const tasks = wallets.map((wallet) => {
-        const address = wallet.address || wallet;
-        log.info(`🚀 Starting claim for: ${address}`);
-        return claimFaucet(address, proxies);
-    });
+    for (const wallet of wallets) {
+        const address = typeof wallet === 'string' ? wallet : wallet.address;
+        if (!address) {
+            log.warn("⚠️ Invalid wallet format detected. Skipping...");
+            continue;
+        }
 
-    try {
-        await Promise.all(tasks);
-        log.info("✅ All wallet claims processed.");
-    } catch (error) {
-        log.error("💥 Error processing wallet claims:", error.message);
+        log.info(`🚀 Starting claim for: ${address}`);
+        await claimFaucet(address, proxies);
+        log.info(`⏳ Waiting 5 seconds before next wallet...`);
+        await delay(5000); // 5 detik antar wallet
     }
+
+    log.info("✅ All wallet claims processed.");
 };
 
-// Tangani error global jika main() gagal
 main().catch((err) => {
-    log.error("💥 Fatal error in main():", err.message);
+    log.error("💥 Fatal error in main():", err?.message || err);
 });
-              
